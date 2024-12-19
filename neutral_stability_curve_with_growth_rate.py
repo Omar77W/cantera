@@ -126,26 +126,80 @@ def compute_properties(phi, T, P):
     
     return sigma, beta
     
-def plot_stability_peninsulas(T, P, phis, Le_effs):
-    plt.figure(figsize=(10, 6))
+def plot_stability_peninsulas(T, P, phis, Le_effs, print_data=True):
     n_range = np.linspace(7, 120, 100)
+    gas = ct.Solution('gri30.yaml')
     
-    gas = ct.Solution('gri30.yaml')  # Create gas object here
-    
-    for phi, Le_eff in zip(phis, Le_effs):
-        sigma, beta = compute_properties(phi, T, P)
-        Pe_values = [compute_Pe(n, sigma, Le_eff, beta, Pr, gas) for n in n_range]
-        plt.plot(Pe_values, n_range, label=f'φ={phi:.1f}')
-    
+    with open('stability_curves.csv', 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        header = ['n'] + [f'phi_{phi:.1f}' for phi in phis]
+        writer.writerow(header)
+        
+        pe_values = []
+        for phi, Le_eff in zip(phis, Le_effs):
+            sigma, beta = compute_properties(phi, T, P)
+            pe_vals = [compute_Pe(n, sigma, Le_eff, beta, Pr, gas) for n in n_range]
+            pe_values.append(pe_vals)
+            plt.plot(pe_vals, n_range, label=f'φ={phi:.1f}')
+        
+        for i in range(len(n_range)):
+            row = [n_range[i]] + [pe_values[j][i] for j in range(len(phis))]
+            writer.writerow(row)
+
     plt.xlabel('Peclet Number')
     plt.ylabel('Wave Number')
-    plt.xlim([0, 1500])
+    plt.xlim([0, 1500]) 
     plt.ylim([0, 120])
-    plt.legend()
+    plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
     plt.grid(True)
     plt.title('Neutral Stability Curves')
+    plt.tight_layout()
     plt.show()
 
+import pandas as pd
+
+def plot_growth_rate_components(phis, gas, T, P, n=16.2, Pe=200):
+    omegas, Q1_terms, Q2_terms, Q3_terms = [], [], [], []
+    
+    for phi in phis:
+        sigma, beta = compute_properties(phi, T, P)
+        omega = compute_omega(n, sigma)
+        gamma1, gamma2, gamma3 = compute_thermal_conductivity_integral(None, sigma, gas)
+        
+        gas.equilibrate('HP')
+        lambda_b = gas.thermal_conductivity
+        Q1, Q2, Q3 = compute_stability_coefficients(n, sigma, omega, lambda_b, gamma1, gamma2, gamma3)
+        
+        omegas.append(omega)
+        Q1_terms.append(-Q1/Pe)
+        Q2_terms.append(-beta*(Le_eff - 1)*Q2/(Pe*(sigma-1)))
+        Q3_terms.append(-Pr*Q3/Pe)
+    
+    # Save to CSV
+    data = {
+        'phi': phis,
+        'omega': omegas,
+        'Q1_term': Q1_terms,
+        'Q2_term': Q2_terms, 
+        'Q3_term': Q3_terms
+    }
+    df = pd.DataFrame(data)
+    df.to_csv('growth_rate_data.csv', index=False)
+    
+    # Plot code remains the same...
+    plt.figure(figsize=(10, 6))
+    plt.plot(phis, omegas, 'k-s', label='ω')
+    plt.plot(phis, Q1_terms, 'b-s', label='-Q₁/Pe')
+    plt.plot(phis, Q2_terms, 'r-o', label='-β(Le_eff-1)Q₂/[Pe(σ-1)]') 
+    plt.plot(phis, Q3_terms, 'g-^', label='-PrQ₃/Pe')
+    
+    plt.xlabel('Equivalence ratio')
+    plt.ylabel('Logarithmic growth rate of disturbance')
+    plt.grid(True)
+    plt.axhline(y=0, color='k', linestyle='--', alpha=0.3)
+    plt.legend()
+    plt.title(f'Growth Rate Components at T={T}K, P={P/1e5}atm')
+    plt.show()
     
 # Main calculation
 if __name__ == "__main__":
@@ -180,6 +234,11 @@ if __name__ == "__main__":
 
     # Add this to main calculation
     plot_stability_peninsulas(T, P, phis, Le_effs)
+
+    gas = ct.Solution('gri30.yaml')  # Create gas object
+    phis = np.arange(0.7, 2.2, 0.1)
+    plot_growth_rate_components(phis, gas, T=300, P=5e5)
+
     # Plot results
     phis, Pe_crits, n_crits = zip(*results)
     
